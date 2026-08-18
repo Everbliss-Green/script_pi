@@ -14,6 +14,46 @@ cd script_pi
 ./send_message.sh hello             # as often as you like
 ```
 
+## What you need on the Pi
+
+Verified against Raspberry Pi OS Lite (64-bit), Debian 13 "trixie", on a Pi 3B.
+
+| Tool | Version here | Needed for | On a fresh Pi OS Lite | If missing |
+|---|---|---|---|---|
+| `bash` | 5.2.37 | running `*.sh` | **Always** — Debian `Priority: required` | n/a |
+| `python3` | 3.13.5 | `rftag_cli.py` (needs **3.6+**) | Yes, but `Priority: optional` — not guaranteed on every image | `sudo apt install python3` |
+| `pyserial` | 3.5 | talking to the serial port | **No — this is the one you must install** | `./setup.sh`, or `sudo apt install python3-serial` |
+| `git` | 2.47.3 | cloning this repo | Yes, but `Priority: optional` | `sudo apt install git` |
+| `sudo` | — | `setup.sh` installs packages | Yes, and the first user gets passwordless sudo | n/a |
+| `dialout` group | — | permission to open `/dev/ttyACM*` | Yes — the image's first user is already a member | `sudo usermod -a -G dialout $USER`, then log out and back in |
+
+`pyserial` is the only real dependency. Everything else ships with a standard
+Raspberry Pi OS image; the table lists them because a minimal Debian or a
+custom image can omit `python3` and `git`, both of which are `optional`
+priority rather than `required`.
+
+`rftag_cli.py` imports only `argparse`, `re`, `sys` and `time` from the
+standard library, plus `pyserial`. There is no virtualenv, no build step, no
+`requirements.txt` and no compiler involved.
+
+Check everything at once:
+
+```bash
+bash --version | head -1
+python3 -V
+git --version
+python3 -c "import serial; print('pyserial', serial.__version__)"
+id -nG | tr ' ' '\n' | grep -qx dialout && echo "dialout: ok" || echo "dialout: MISSING"
+```
+
+### Hardware
+
+| Item | Notes |
+|---|---|
+| RFTag board | Enumerates as USB `1915:520f`. Must be powered and running the app firmware. |
+| USB cable | **Must be a data cable.** A charge-only cable is the most common failure — the board lights up but never enumerates. |
+| Host USB power | On a Pi 3B all four ports share a ~1.2 A budget. If the board enumerates then vanishes, that is the brownout signature. |
+
 ## The scripts
 
 | Script | What it does |
