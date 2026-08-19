@@ -95,8 +95,9 @@ Three interfaces is correct: shell, log console, and mcumgr. The scripts probe
 for the one that answers with a `uart:~$` prompt, so the device number does not
 have to be known in advance.
 
-**If this reports no board found, stop here** and work through §5 before
-continuing.
+**If this reports no board found, stop here** and work through
+**Section 5 — Troubleshooting** before continuing. The most common cause is a
+charge-only USB cable.
 
 ### Step 4 — Check the board's identity and radio (optional)
 
