@@ -160,7 +160,9 @@ def parse(md):
             items, ordered = [], bool(re.match(r"^\s*\d+\.\s+", ln))
             while i < len(lines) and (re.match(r"^\s*[-*]\s+", lines[i])
                                       or re.match(r"^\s*\d+\.\s+", lines[i])
-                                      or (lines[i].startswith("   ") and lines[i].strip()
+                                      # A wrapped list item is indented, but by
+                                      # 2 spaces under "- " and 3 under "1. ".
+                                      or (re.match(r"^\s{2,}\S", lines[i])
                                           and items)):
                 if re.match(r"^\s*[-*]\s+", lines[i]) or re.match(r"^\s*\d+\.\s+", lines[i]):
                     items.append(re.sub(r"^\s*(?:[-*]|\d+\.)\s+", "", lines[i]))
@@ -290,7 +292,7 @@ def build_story(blocks):
 
 
 TITLE = "RFTag Messaging SOP"
-SUBTITLE = "Sending and Receiving LoRa Messages from a Raspberry Pi"
+SUBTITLE = "Sending and Receiving LoRa Messages from a Linux Host"
 
 
 def decorate(canvas, doc):
@@ -332,11 +334,16 @@ def main(src, dst):
         Paragraph(f'<font color="#5c5c5c" size="10">{SUBTITLE}</font>', body),
         Spacer(1, 4),
     ]
+    # "Host: Raspberry Pi OS" read as a requirement rather than as the machine
+    # this happened to be checked on, so the strip now separates what is needed
+    # from what it was verified against.
     meta = Table([[
-        Paragraph('<b>Firmware</b><br/>2.2.2-rel (b5b3ef9b4470)', cell),
-        Paragraph('<b>Host</b><br/>Raspberry Pi OS Lite 64-bit (Debian 13)', cell),
-        Paragraph('<b>Verified</b><br/>2026-08-19', cell),
-    ]], colWidths=[FRAME_W / 3] * 3)
+        Paragraph('<b>Runs on</b><br/>Any Linux host, or macOS. '
+                  'Needs bash, Python 3.6+ and pyserial.', cell),
+        Paragraph('<b>Firmware</b><br/>RFTag 2.2.2-rel (b5b3ef9b4470)', cell),
+        Paragraph('<b>Verified on</b><br/>Raspberry Pi 3B, Pi OS Lite 64-bit '
+                  '(Debian 13), 2026-08-19', cell),
+    ]], colWidths=[FRAME_W * 0.34, FRAME_W * 0.30, FRAME_W * 0.36])
     meta.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), HEAD_BG),
         ("BOX", (0, 0), (-1, -1), 0.4, RULE),

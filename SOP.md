@@ -1,12 +1,19 @@
 # SOP — Sending and Receiving RFTag Messages from a Raspberry Pi
 
 **Scope.** Putting an RFTag board into a group and exchanging LoRa text
-messages using a Raspberry Pi as the host.
+messages from a Linux host. A Raspberry Pi is used throughout as the example.
+
+**Any Linux host will do.** The procedure was verified on a Raspberry Pi, but
+nothing in it is Pi-specific — the scripts need only `bash`, Python 3.6+ and
+pyserial, and the board is found by its USB ID rather than by a hardcoded
+device path. It also runs on macOS. Where a step differs on another
+distribution it is called out.
 
 **Every terminal block in this document is real output**, captured from a
 Raspberry Pi 3B running Raspberry Pi OS Lite (64-bit, Debian 13 "trixie")
 against RFTag firmware `2.2.2-rel` (build `b5b3ef9b4470`) on 2026-08-19.
-Nothing is illustrative or reconstructed.
+Nothing is illustrative or reconstructed — which is why every prompt reads
+`pi@raspberrypi`. Yours will differ.
 
 ---
 
@@ -18,18 +25,33 @@ Nothing is illustrative or reconstructed.
 |---|---|
 | RFTag board | Powered and running application firmware. Enumerates as USB `1915:520f`. |
 | USB cable | **Must carry data.** A charge-only cable is the most common failure — the board powers up and looks alive but never appears to the Pi. |
-| Host | Raspberry Pi (or any Linux box / Mac). On a Pi 3B all four USB ports share a ~1.2 A budget. |
+| Host | **Any Linux machine, or a Mac.** A Raspberry Pi is convenient, not required. On a Pi 3B all four USB ports share a ~1.2 A budget. |
 | Second board | Required only to confirm messages are actually received over the air. |
 
 ### Software
 
-| Tool | Version used | On a fresh Pi OS Lite | If missing |
-|---|---|---|---|
-| `bash` | 5.2.37 | Always — Debian `Priority: required` | n/a |
-| `python3` | 3.13.5 | Yes, but `Priority: optional` | `sudo apt install python3` |
-| `pyserial` | 3.5 | **No — must be installed** | `./setup.sh` |
-| `git` | 2.47.3 | Yes, but `Priority: optional` | `sudo apt install git` |
-| `dialout` group | — | Yes, the image's first user is a member | `sudo usermod -a -G dialout $USER`, then re-login |
+| Tool | Minimum | Version tested | On a fresh Pi OS Lite | If missing |
+|---|---|---|---|---|
+| `bash` | any | 5.2.37 | Always — Debian `Priority: required` | n/a |
+| `python3` | **3.6** | 3.13.5 | Yes, but `Priority: optional` | `sudo apt install python3` |
+| `pyserial` | 3.0 | 3.5 | **No — must be installed** | `./setup.sh` |
+| `git` | any | 2.47.3 | Yes, but `Priority: optional` | `sudo apt install git` |
+| serial group | — | — | Yes, the image's first user is in `dialout` | `sudo usermod -a -G dialout $USER`, then re-login |
+
+### On other distributions and macOS
+
+Two things differ away from Debian and Raspberry Pi OS:
+
+- **`setup.sh` installs via `apt`.** On a non-apt distribution it falls back to
+  `pip install --user pyserial`, or install your distribution's package —
+  `python3-pyserial` on Fedora, `python-pyserial` on Arch.
+- **The serial group is not always called `dialout`.** Debian, Ubuntu, Raspberry
+  Pi OS and Fedora use `dialout`; Arch and openSUSE use `uucp`. Substitute the
+  right name in the `usermod` command. macOS needs no group at all.
+
+Everything else — board discovery, the shell protocol, all four scripts — is
+identical, because the board is located by USB vendor and product ID rather
+than by a device path.
 
 Verify the environment:
 

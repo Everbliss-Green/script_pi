@@ -1,7 +1,9 @@
 # script_pi
 
-Scripts for driving an **RFTag** board from a Raspberry Pi (or any Linux box, or
-a Mac) over USB.
+Scripts for driving an **RFTag** board over USB from **any Linux host** — or a
+Mac. A Raspberry Pi is the example throughout, but nothing here is Pi-specific:
+the scripts need only `bash`, Python 3.6+ and pyserial, and the board is found
+by its USB ID rather than a hardcoded device path.
 
 Plug the board into the Pi with a USB cable, clone this repo, and you can put
 the board into a group and send LoRa messages from the shell.
