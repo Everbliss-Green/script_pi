@@ -54,6 +54,8 @@ id -nG | tr ' ' '\n' | grep -qx dialout && echo "dialout: ok" || echo "dialout: 
 | USB cable | **Must be a data cable.** A charge-only cable is the most common failure — the board lights up but never enumerates. |
 | Host USB power | On a Pi 3B all four ports share a ~1.2 A budget. If the board enumerates then vanishes, that is the brownout signature. |
 
+> **Step-by-step procedure with real captured terminal output: [SOP.md](SOP.md)**
+
 ## The scripts
 
 | Script | What it does |
