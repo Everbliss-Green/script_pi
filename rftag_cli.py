@@ -16,6 +16,7 @@ Only dependency is pyserial.
 """
 
 import argparse
+import datetime
 import re
 import sys
 import time
@@ -312,7 +313,12 @@ def cmd_join(args):
 
 def cmd_raw(args):
     with connect(args) as dev:
-        res = dev.command(" ".join(args.words), timeout=args.timeout, check=False)
+        # Re-quote any argument containing spaces. The shell that invoked us
+        # already stripped the quotes, so joining on " " would turn
+        #   raw rftag msg incoming store MAC "hello there" 123
+        # into five arguments instead of four and silently mis-parse them.
+        parts = [f'"{w}"' if (" " in w or w == "") else w for w in args.words]
+        res = dev.command(" ".join(parts), timeout=args.timeout, check=False)
         print(res.output)
         if not res.ok:
             print(f"error: {res.error}", file=sys.stderr)
@@ -536,6 +542,189 @@ def cmd_provision(args):
     return 0
 
 
+# ---------------------------------------------------------------- receiving
+
+# From rftag_protocol_serializer.h. The firmware's own read command only names
+# 0x03 and 0x04 and calls everything else "unknown", so we decode the rest here.
+MSG_TYPES = {
+    0x01: "join",
+    0x02: "location",
+    0x03: "group text",
+    0x04: "direct text",
+    0x05: "delivery receipt",
+    0x06: "targeted resend",
+}
+
+# Receipts carry an 11-byte binary payload, not text (BLE_APP_SERVICE_SPEC.md).
+# Rendering those bytes as a string produces mojibake, so show hex instead.
+BINARY_MSG_TYPES = {0x05}
+
+# The repo prints this via shell_print, not shell_error -- an empty inbox is
+# not a failure, so it has to be recognised by text rather than by colour.
+NO_MESSAGES = "No messages available"
+
+_FIELD_RE = {
+    "mac":       re.compile(r"^\s*MAC:\s*(\S+)", re.M),
+    "timestamp": re.compile(r"^\s*Timestamp:\s*(\d+)", re.M),
+    "status":    re.compile(r"^\s*Status:\s*0x([0-9A-Fa-f]+)", re.M),
+    "msgtype":   re.compile(r"^\s*MsgType:\s*0x([0-9A-Fa-f]+)", re.M),
+    "text":      re.compile(r"^\s*Text:\s*'(.*)'\s*$", re.M),
+    "length":    re.compile(r"^\s*Length:\s*(\d+)", re.M),
+}
+
+
+def fetch_status_flags(dev):
+    """Ask the device for its own status-flag table.
+
+    Reading it off the device rather than hardcoding it means the decode can
+    never drift from the firmware.
+    """
+    out = dev.command("rftag settings status list", check=False).output
+    table = {}
+    for line in out.splitlines():
+        m = re.match(r"\s*(\w+)\s+(\d+)\s+0x([0-9A-Fa-f]{4})\s*$", line)
+        if m:
+            table[int(m.group(3), 16)] = m.group(1)
+    return table
+
+
+def decode_status(value, table):
+    """Names for the bits we know, plus whatever is left over.
+
+    The device's flag table only covers the bits the firmware names. Silently
+    dropping the rest would misreport a status like 0x4201 as plain "leader",
+    so unknown bits are surfaced rather than hidden.
+    """
+    names = [name for bit, name in sorted(table.items()) if value & bit]
+    known = 0
+    for bit in table:
+        known |= bit
+    leftover = value & ~known
+    if leftover:
+        names.append(f"unknown bits 0x{leftover:04X}")
+    return names
+
+
+def render_text(text, msgtype):
+    """Show printable payloads as text and binary ones as hex."""
+    if msgtype in BINARY_MSG_TYPES or any(
+            ch < " " or ch == "\x7f" for ch in text):
+        raw = text.encode("utf-8", errors="surrogateescape")
+        return "hex " + " ".join(f"{b:02X}" for b in raw)
+    return f'"{text}"' 
+
+
+def format_timestamp(raw):
+    """Render a device timestamp, flagging an obviously unset RTC."""
+    try:
+        ts = int(raw)
+        dt = datetime.datetime.fromtimestamp(ts)
+    except (ValueError, OverflowError, OSError):
+        return str(raw), ""
+    stamp = dt.strftime("%Y-%m-%d %H:%M:%S")
+    # The board ships with its RTC unset; messages then carry a stale default.
+    note = "  (device RTC looks unset)" if dt.year < 2025 else ""
+    return stamp, note
+
+
+def parse_message(output):
+    """Turn one `msg incoming read` response into a dict, or None if empty."""
+    if NO_MESSAGES in output:
+        return None
+    msg = {}
+    for key, pattern in _FIELD_RE.items():
+        m = pattern.search(output)
+        msg[key] = m.group(1) if m else ""
+    return msg if msg.get("mac") else None
+
+
+def render_message(msg, flags, index=None):
+    stamp, note = format_timestamp(msg["timestamp"])
+    try:
+        status_val = int(msg["status"], 16)
+    except ValueError:
+        status_val = 0
+    names = decode_status(status_val, flags)
+    try:
+        type_val = int(msg["msgtype"], 16)
+    except ValueError:
+        type_val = -1
+    type_name = MSG_TYPES.get(type_val, f"unknown (0x{msg['msgtype']})")
+
+    head = f"[{index}] " if index is not None else ""
+    lines = [
+        f"{head}from {msg['mac']}   {type_name}   {stamp}{note}",
+        f"     status 0x{msg['status']}" + (f"  [{', '.join(names)}]" if names else ""),
+        f"     {render_text(msg['text'], type_val)}  ({msg['length']} bytes)",
+    ]
+    return "\n".join(lines)
+
+
+def message_count(dev):
+    out = dev.command("rftag msg incoming count", check=False).output
+    m = re.search(r"count:\s*(-?\d+)", out)
+    return int(m.group(1)) if m else 0
+
+
+def drain_messages(dev, flags, start_index=1):
+    """Read every pending message. Each read consumes one, so print as we go."""
+    shown = 0
+    while True:
+        res = dev.command("rftag msg incoming read", timeout=4.0, check=False)
+        if not res.ok:
+            print(f"error reading: {res.error}", file=sys.stderr)
+            break
+        msg = parse_message(res.output)
+        if msg is None:
+            break
+        print(render_message(msg, flags, start_index + shown))
+        shown += 1
+    return shown
+
+
+def cmd_receive(args):
+    with connect(args) as dev:
+        if args.clear:
+            res = dev.command("rftag msg incoming clear", check=False)
+            print(res.output or "cleared")
+            return 0 if res.ok else 1
+
+        flags = fetch_status_flags(dev)
+
+        if args.count:
+            print(f"Incoming messages waiting: {message_count(dev)}")
+            return 0
+
+        if not args.watch:
+            pending = message_count(dev)
+            if pending <= 0:
+                print("No messages waiting.")
+                return 0
+            print(f"{pending} message(s) waiting:\n")
+            drain_messages(dev, flags)
+            return 0
+
+        # Watch mode: poll the count, and drain whenever it goes positive.
+        print(f"Watching for messages on {dev.port} -- polling every "
+              f"{args.interval}s. Ctrl-C to stop.")
+        total = 0
+        pending = message_count(dev)
+        if pending > 0:
+            print(f"\n{pending} already waiting:\n")
+            total += drain_messages(dev, flags)
+        print("\nWaiting...")
+        try:
+            while True:
+                time.sleep(args.interval)
+                if message_count(dev) > 0:
+                    stamp = datetime.datetime.now().strftime("%H:%M:%S")
+                    print(f"\n--- {stamp} ---")
+                    total += drain_messages(dev, flags, total + 1)
+        except KeyboardInterrupt:
+            print(f"\nStopped. {total} message(s) received.")
+        return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog="rftag_cli.py",
@@ -546,6 +735,7 @@ def build_parser():
                '  ./rftag_cli.py send "hello mesh"\n'
                '  ./rftag_cli.py direct AABBCCDDEEFF "private note"\n'
                "  ./rftag_cli.py location 87 14.5995 120.9842\n"
+               "  ./rftag_cli.py receive --watch\n"
                "  ./rftag_cli.py provision mountaineering\n"
                "  ./rftag_cli.py monitor\n",
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -597,6 +787,17 @@ def build_parser():
     s.set_defaults(func=cmd_provision)
 
     sub.add_parser("profiles", help="list available profiles and their commands").set_defaults(func=cmd_profiles)
+
+    s = sub.add_parser("receive", help="read incoming LoRa messages")
+    s.add_argument("-w", "--watch", action="store_true",
+                   help="keep polling and print messages as they arrive")
+    s.add_argument("-n", "--interval", type=float, default=2.0,
+                   help="seconds between polls in watch mode (default: 2)")
+    s.add_argument("-c", "--count", action="store_true",
+                   help="just print how many are waiting, read nothing")
+    s.add_argument("--clear", action="store_true",
+                   help="discard all pending messages without reading them")
+    s.set_defaults(func=cmd_receive)
 
     s = sub.add_parser("monitor", help="tail the device log console")
     s.add_argument("--log-port", help="log interface (default: auto)")

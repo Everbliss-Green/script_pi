@@ -61,6 +61,7 @@ id -nG | tr ' ' '\n' | grep -qx dialout && echo "dialout: ok" || echo "dialout: 
 | `./setup.sh` | One-time machine setup. Installs pyserial and grants serial-port access. |
 | `./set_group.sh [profile]` | Puts the board in a group and pins its whole radio config. Verifies every value. |
 | `./send_message.sh <message>` | Sends one text message over LoRa. Run it as many times as you want. |
+| `./receive_messages.sh` | Reads messages this board has received. `--watch` to keep listening. |
 | `./rftag_cli.py` | The engine the two scripts call. Use directly for anything else — `info`, `monitor`, `shell`, `raw`. |
 
 ### `./setup.sh`
@@ -125,6 +126,52 @@ payload as hex and base64 — then `[QUEUED] Message stored for LoRa transmissio
 
 Peers only receive it if they are on the **same group ID and the same radio
 settings**, so run `./set_group.sh` on every board first.
+
+### `./receive_messages.sh`
+
+```bash
+./receive_messages.sh              # print everything waiting, then exit
+./receive_messages.sh --watch      # keep listening, print as they arrive
+./receive_messages.sh --count      # how many are waiting, read nothing
+./receive_messages.sh --clear      # discard what's waiting, unread
+./receive_messages.sh --watch --interval 5
+```
+
+```
+2 message(s) waiting:
+
+[1] from D1:D7:E6:13:AD:1A   group text   2026-08-18 14:09:25
+     status 0x4201  [leader, unknown bits 0x4200]
+     "hello from the trail"  (20 bytes)
+[2] from AA:BB:CC:DD:EE:FF   delivery receipt   2026-08-18 14:09:25
+     status 0x0000
+     hex D4 B5 2C 61 A9 E0 00 01 6A 03 00  (11 bytes)
+```
+
+**Reading a message deletes it from the board.** The firmware pops it off the
+queue — there is no peek. So everything read is printed here and nowhere else;
+if you only want to know how many are waiting, use `--count`, which reads none.
+
+`--watch` drains anything already queued, then polls until you Ctrl-C, printing
+each batch with a timestamp. Only one program can hold the serial port at a
+time, so nothing else can talk to the board while it runs.
+
+Three things the display does that the raw firmware output does not:
+
+- **Names every message type.** The firmware's own read command only labels
+  `0x03` and `0x04` and calls everything else "unknown". Delivery receipts
+  (`0x05`), join, location and targeted resends are named here.
+- **Shows binary payloads as hex.** A delivery receipt carries 11 binary bytes,
+  not text — printing it as a string produces mojibake.
+- **Surfaces status bits it cannot name.** The device's flag table is fetched
+  from the device itself (`rftag settings status list`) so it can never drift
+  from the firmware, but a status like `0x4201` contains bits the table does
+  not cover. Those are reported as `unknown bits 0x4200` rather than dropped,
+  which would misreport the status as plain `leader`.
+
+Timestamps come from the sender. If the sending board's RTC is unset the time
+will be wrong, and the display flags obviously-bogus values with
+`(device RTC looks unset)`.
 
 ## How the board is found
 
